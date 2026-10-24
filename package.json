@@ -1,0 +1,52 @@
+{
+  "name": "oc-pet",
+  "private": true,
+  "version": "0.0.3",
+  "description": "OpenCode 桌宠适配层：复用 dsh-pet 的桌面渲染与宿主半侧，不改上游源码。",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.ts"
+  },
+  "files": [
+    "src",
+    "index.ts",
+    "tui.ts",
+    "docs",
+    "upstream.json",
+    "README.md"
+  ],
+  "scripts": {
+    "spike": "pwsh -NoProfile -File spike/run-spike.ps1",
+    "spike:events": "pwsh -NoProfile -File spike/run-events.ps1",
+    "spike:ocpet": "pwsh -NoProfile -File spike/run-oc-pet.ps1",
+    "upstream:check": "node node_modules/dsh-pet/lib/standalone.js --check",
+    "upstream:standalone": "node node_modules/dsh-pet/lib/standalone.js",
+    "verify": "node scripts/verify-upstream.mjs",
+    "test": "npm run test:unit && npm run verify",
+    "test:unit": "tsx --test src/events.test.ts src/model-sync.test.ts",
+    "typecheck": "tsc --noEmit",
+    "sync": "node scripts/sync-upstream.mjs",
+    "sync:check": "node scripts/sync-upstream.mjs --check",
+    "sync:latest": "node scripts/sync-upstream.mjs --latest"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "dsh-pet": "0.3.8"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

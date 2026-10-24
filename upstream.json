@@ -1,0 +1,59 @@
+{
+  "package": "dsh-pet",
+  "version": "0.3.8",
+  "installedAt": "2026-10-24",
+  "testedWith": {
+    "opencode": "2.1.3",
+    "node": "24.18.0",
+    "platform": "win32-x64"
+  },
+  "contract": {
+    "entrypoints": [
+      "lib/standalone.js",
+      "runtime/electron-helper/main.js",
+      "runtime/electron-helper/host-liveness.js",
+      "runtime/electron-helper/sprite.js",
+      "assets/config.jsonc"
+    ],
+    "http": {
+      "prefix": "/dsh-pet-7340",
+      "endpoints": [
+        "GET /config",
+        "GET /state",
+        "POST /work-status",
+        "DELETE /work-status",
+        "POST /pet-display",
+        "POST /lock",
+        "POST /lock/release",
+        "POST /anim",
+        "POST /broadcast",
+        "POST /whisper",
+        "POST /chat",
+        "POST /menu/item",
+        "DELETE /menu/item",
+        "GET /menu/events",
+        "POST /menu/click",
+        "POST /reload"
+      ],
+      "rootEndpoints": [
+        "GET /health",
+        "GET /standalone-ai/settings",
+        "POST /standalone-ai/settings",
+        "POST /standalone-ai/test",
+        "POST /shutdown"
+      ]
+    },
+    "runtimeFile": "<DSH_HOME>/dsh-pet/standalone-runtime.json",
+    "runtimeFields": ["pid", "port", "token", "startedAt", "settingsUrl"],
+    "menuPatch": {
+      "file": "runtime/electron-helper/sprite.js",
+      "marker": "oc-pet: menu trimmed for OpenCode",
+      "removes": ["打开网站", "内置查看余额", "显示位置"]
+    }
+  },
+  "policy": {
+    "sourcePatches": "runtime-ui-only (menu-patch.mjs; no business logic)",
+    "integrationSurface": "npm package + standalone CLI + local HTTP API + runtime file + OpenCode auth/config (read-only)",
+    "note": "上游升级只允许通过 npm 版本号变更；禁止直接改 node_modules 以外的上游源码。菜单裁剪是幂等的运行时 UI 补丁，契约测试会检查 marker 与移除项。"
+  }
+}

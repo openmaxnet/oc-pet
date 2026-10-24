@@ -1,0 +1,8 @@
+{
+  "name": "oc-pet-spike-project",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "oc-pet": "file:../.."
+  }
+}

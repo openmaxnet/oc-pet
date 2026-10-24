@@ -1,0 +1,9 @@
+{
+  "name": "oc-pet-spike",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.ts"
+  }
+}
