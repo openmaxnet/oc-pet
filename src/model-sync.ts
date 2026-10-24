@@ -126,7 +126,10 @@ export function createModelSync(deps: ModelSyncDeps): ModelSync {
         await root.postJson("standalone-ai/settings", body, 10_000)
         lastKey = key
         lastWarnKey = ""
-        logger.info(`模型同步：${resolved.providerID}/${resolved.model}`)
+        logger.info(
+          `模型同步：${resolved.providerID}/${resolved.model}` +
+            (resolved.oauth ? `（官方订阅 OAuth，经 ${resolved.baseUrl} 本机转接）` : ""),
+        )
       } catch (error) {
         logger.warn(`模型同步失败（下轮重试）：${String(error)}`)
       }

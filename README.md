@@ -109,7 +109,28 @@ Provider → Base URL 映射（`opencode.json` 里 provider 的 `settings.baseUR
 - `cmdc-*` / `commandcode` → `https://api.commandcode.ai/provider/v1`
 - `opencode-go` → `https://opencode.ai/zen/go/v1`
 - `deepseek*` → `https://api.deepseek.com/v1`
-- 密钥：优先 `opencode auth export` 的 per-provider key（多账号），回退 `auth.json` / `OPENCODE_GO_API_KEY` / `DEEPSEEK_API_KEY`
+- 密钥：优先 `opencode auth export` 的 per-provider 凭证（多账号里取 `active`），回退 `auth.json` / `OPENCODE_GO_API_KEY` / `DEEPSEEK_API_KEY`
+
+### OpenCode 官方订阅（OAuth，无需导出 key）
+
+`opencode auth export` 里的 `type: "oauth"` 记录本身就带 `access`（`st_…`）与 `refresh`，适配层直接把它当 Bearer 用 —— **不需要**手动导出或复制 API key。
+
+只有一处需要额外处理：Go 推理接口强制要求每次请求带 `x-opencode-session`（稳定会话 ID，见[官方说明](https://opencode.ai/docs/go/#where-can-i-use-it)），而 dsh-pet standalone 的 AI 传输层只发 `authorization` / `content-type` / `accept`，设置 schema 是 strict 的、没有自定义头字段。为不改上游源码，适配层在**本机回环**起一个小转接头：
+
+```
+dsh-pet standalone ──Bearer st_…──▶ 127.0.0.1:<随机端口>/v1/chat/completions
+                                          │ 补 x-opencode-session + UA
+                                          ▼
+                          https://opencode.ai/inference/go/openai/v1/…
+```
+
+- 只监听 `127.0.0.1`，只代理 `/v1/*`；token 每次请求现取（OpenCode 自己刷新后 5s 内跟上）；
+- 会话 ID 持久化在 `$DSH_HOME/dsh-pet/zen-session-id`（官方要求「稳定会话 ID」，影响路由与 prompt 缓存）；
+- 生命周期跟随 TUI：插件 cleanup 时关闭（`keepAlive=true` 且 TUI 全关后，宠物还在但 AI 会不可用，重开 TUI 恢复）；
+- 启动日志：`Zen 转接头就绪：http://127.0.0.1:xxxxx/v1 → …`；`OpenCode 官方凭证：oauth 订阅`；
+- 余额：`GET /zen/go/v1/usage` 只需 Bearer，无需转接头，`/pet-balance` 直接读订阅用量。
+
+> 官方 Go 文档明确允许「OpenCode 以外的 coding agent」接入，要求自报 UA 并带稳定会话头；转接头正是按这个要求补的（`user-agent: oc-pet/0.1.1 …`）。
 
 行为细节：
 
@@ -172,7 +193,7 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 
 ## 已验证 / 未完成
 
-已验证（2026-10-24，Windows + OpenCode 2.1.3 + dsh-pet 0.3.8）：
+已验证（2026-10-24，Windows + OpenCode 2.1.3 / 2.1.4 + dsh-pet 0.3.8）：
 
 - CLI 插件加载、Bun 运行时、`spawn`、文件系统；
 - 事件流 → 6 档工作状态：`idle → working → result → success` 真实会话跑通；
@@ -181,6 +202,7 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 - 对话：AI 回复成功并写入气泡；
 - 桌面菜单裁剪 + 「更多 → 查看余额」第三方菜单点击；
 - 系统通知：已接入 `context.attention.notify`（主实例 / `when: blurred`；真实 toast 未做失焦自动化验证）；
+- 官方订阅（OAuth）：`/standalone-ai/test` 返回 `ok:true`、`/whisper` 真实碎碎念成功、`/zen/go/v1/usage` 读到订阅用量；全程未导出任何 key；
 - 复用 / 拉起 / 正常停 / 强杀 watchdog 兜底；
 - 项目发现、`cli.json` 本地目录两种加载路径。
 
@@ -190,7 +212,8 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 - **与 DSH in-process 同时运行**：可能各起一只（standalone 的 runtime 文件只覆盖 standalone 形态）。
 - **Web 浮层**：不做，OpenCode 无对应容器。
 - **模型跟随是单宠物口径**：多会话不同模型时，宠物跟随最近活跃会话；不是每个会话一只。
-- **provider key 来源**：优先 `opencode auth export`（多账号 per-provider key），回退 `auth.json` / 环境变量；export 不可用时用 `/pet-ai` 手动填。key 缓存 30s。
+- **provider 凭证来源**：优先 `opencode auth export`（多账号 per-provider；`type: "key"` 与 `type: "oauth"` 都认，后者是官方订阅的 `st_…`），回退 `auth.json` / 环境变量；export 不可用时用 `/pet-ai` 手动填。key 缓存 30s。
+- **官方订阅经本机转接头**：`opencode-go` 等 `opencode` 系 provider 的 OAuth 凭证必须走回环代理补 `x-opencode-session`（见上），代理随 TUI 生命周期；`keepAlive=true` 时 TUI 全关后 AI 暂不可用。
 - **模型同步最多 5s 延迟**；key 热更新最多 30s；`/pet-ai` 里改模型会被跟随逻辑覆盖，切模型请用 `/models`。
 - **菜单裁剪依赖上游 `sprite.js` 结构**：上游大改时 `menu-patch.mjs` 会明确报错，需同步更新（契约测试会红）。
 
@@ -215,7 +238,8 @@ npm run spike:ocpet   # 起一次 TUI + 适配层，检查 daemon / 状态 / 清
 - `src/commands.ts` —— `/pet*` 命令
 - `src/ai.ts` —— 打开 standalone AI 设置页
 - `src/model-sync.ts` —— 活跃会话模型 → standalone AI 设置（5s 同步）
-- `src/opencode.ts` —— 只读 OpenCode auth/config（模型/密钥解析）
+- `src/opencode.ts` —— 只读 OpenCode auth/config（模型/凭证解析，API key 与 OAuth access 都认）
+- `src/zen-proxy.ts` —— 官方订阅 OAuth 的本机转接头（补 `x-opencode-session`）
 - `src/balance.ts` —— 余额查询 + 档位动画 + 第三方菜单
 - `src/notifier.ts` —— 系统通知（主实例 / 失焦）
 - `src/menu-patch.mjs` —— 桌面右键菜单裁剪

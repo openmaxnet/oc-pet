@@ -28,9 +28,10 @@ import { cleanupOldWatchdog, startWatchdog } from "./watchdog"
 import { applyMenuPatch } from "./menu-patch.mjs"
 import { openAiSettings as openAiSettingsPage } from "./ai"
 import { createModelSync } from "./model-sync"
-import { currentModel } from "./opencode"
+import { authCredentialFor, authKeyFor, currentModel, refreshAuthExport, resolveAiConfigFor } from "./opencode"
 import { Notifier } from "./notifier"
 import { createBalanceService } from "./balance"
+import { startZenProxy, type ZenProxy } from "./zen-proxy"
 
 interface PluginContext {
   options?: unknown
@@ -116,10 +117,31 @@ export default {
     const options = resolveOptions(context.options)
     const logger = createLogger(options)
     logger.info(
-      `setup: oc-pet@0.0.3 opencode=${context.app?.version ?? "?"} ` +
-        `cwd=${context.location?.directory ?? process.cwd()} home=${options.home} keepAlive=${options.keepAlive}`,
+      `setup: oc-pet@0.1.1 opencode=${context.app?.version ?? "?"} ` +
+        `cwd=${context.location?.directory ?? process.cwd()} home=${options.home} keepAlive=${options.keepAlive} ` +
+        `runtime=${process.versions.bun ? `bun ${process.versions.bun}` : "node"}`,
     )
     ensureDataDir(options.home)
+
+    // 0) 官方订阅（OAuth）转接头：Go 推理接口强制要 x-opencode-session，
+    //    standalone 传输层加不了自定义头 → 本机回环代理补头（见 zen-proxy.ts）。
+    let zenProxy: ZenProxy | undefined
+    try {
+      zenProxy = await startZenProxy({
+        home: options.home,
+        logger,
+        getToken: () => authKeyFor("opencode"),
+      })
+    } catch (error) {
+      logger.warn(`Zen 转接头启动失败（官方订阅的 AI 能力将不可用）：${String(error)}`)
+    }
+
+    // 凭据来源诊断：OAuth（官方订阅）走 `opencode auth export`，只在 Bun/opencode 运行时可用
+    await refreshAuthExport(true)
+    const openCodeCredential = authCredentialFor("opencode")
+    logger.info(
+      `OpenCode 官方凭证：${openCodeCredential ? (openCodeCredential.oauth ? "oauth 订阅" : "api key") : "未找到"}`,
+    )
 
     // 1) 桌面菜单裁剪：OpenCode 不需要「打开网站 / 显示位置」，内置「查看余额」改走第三方菜单
     const spriteFile = join(resolveUpstreamRoot(), "runtime", "electron-helper", "sprite.js")
@@ -170,6 +192,9 @@ export default {
       root: rootHttp,
       reducer,
       logger,
+      // 官方订阅走本机转接头；其它 provider 用原 baseUrl
+      resolve: (providerID, modelID) =>
+        resolveAiConfigFor(providerID, modelID, { zenProxyBaseUrl: zenProxy?.url }),
     })
     const notifier = new Notifier(context, options.home, logger)
     const balance = createBalanceService({
@@ -308,6 +333,12 @@ export default {
       disposeCommands = undefined
 
       await client.clear(true)
+      try {
+        await zenProxy?.close()
+      } catch {
+        // ignore
+      }
+      zenProxy = undefined
       const shouldStop = releaseLease(options.home, logger)
       if (shouldStop && !options.keepAlive && !daemonStopped) {
         await stopDaemon(options.home, runtime, logger)

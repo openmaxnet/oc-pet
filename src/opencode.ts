@@ -77,45 +77,82 @@ export function readGlobalConfig(): OpenCodeConfig | undefined {
   return parsed && typeof parsed === "object" ? (parsed as OpenCodeConfig) : undefined
 }
 
-function authKeyOf(auth: Record<string, unknown>, providerID: string): string | undefined {
+/**
+ * 一条 OpenCode 凭证。
+ *   - `oauth=false`：普通 API key（`type: "api"` 或 `{ type: "key" }`）；
+ *   - `oauth=true`：OpenCode 官方订阅的 OAuth access token（`type: "oauth"`，`access` 字段）。
+ * 两者都能当 Bearer 用；区别只在 `opencode` 系 provider 需要经本机转接头补 `x-opencode-session`。
+ */
+export interface AuthCredential {
+  key: string
+  oauth: boolean
+}
+
+/** 从 auth.json 的单条记录里取可用凭证（key / oauth access 都认）。 */
+function credentialOf(value: unknown): AuthCredential | undefined {
+  if (typeof value === "string" && value) return { key: value, oauth: false }
+  if (!value || typeof value !== "object") return undefined
+  const record = value as { key?: unknown; access?: unknown; type?: unknown }
+  if (typeof record.key === "string" && record.key) return { key: record.key, oauth: false }
+  if (typeof record.access === "string" && record.access) return { key: record.access, oauth: true }
+  return undefined
+}
+
+/**
+ * provider id 的别名链：OpenCode 里同一个上游可能挂在 `cmdc-*` / `opencode-go` / `deepseek*`
+ * 等不同 id 上，而 `auth export` 的 integrationID 只用一个（如 `opencode` / `commandcode`）。
+ */
+function providerCandidates(providerID: string): string[] {
   const candidates = [providerID]
   if (providerID.startsWith("cmdc-") || providerID === "commandcode") candidates.push("commandcode")
   if (providerID.startsWith("opencode")) candidates.push("opencode-go", "opencode")
   if (providerID.startsWith("deepseek")) candidates.push("deepseek", "deepseek-official")
+  return [...new Set(candidates)]
+}
+
+function credentialOfAuth(auth: Record<string, unknown>, candidates: string[]): AuthCredential | undefined {
   for (const key of candidates) {
-    const value = auth[key]
-    if (typeof value === "string" && value) return value
-    if (value && typeof value === "object") {
-      const secret = (value as { key?: unknown }).key
-      if (typeof secret === "string" && secret) return secret
-    }
+    const found = credentialOf(auth[key])
+    if (found) return found
   }
   return undefined
 }
 
+/** 当前 provider 的凭证：优先 `opencode auth export`（多账号里取 active），回退 auth.json。 */
+export function authCredentialFor(providerID: string): AuthCredential | undefined {
+  const candidates = providerCandidates(providerID)
+  const exported = authExportCache?.entries
+  if (exported) {
+    for (const id of candidates) {
+      const found = exported.get(id)
+      if (found) return found
+    }
+  }
+  return credentialOfAuth(readAuth(), candidates)
+}
+
 export function authKeyFor(providerID: string): string | undefined {
-  const exported = authExportCache?.keys.get(providerID)
-  if (exported) return exported
-  return authKeyOf(readAuth(), providerID)
+  return authCredentialFor(providerID)?.key
 }
 
 interface AuthExportEntry {
   integrationID?: unknown
   active?: unknown
-  value?: { key?: unknown } | unknown
+  value?: { key?: unknown; access?: unknown; type?: unknown } | unknown
 }
 
-let authExportCache: { at: number; keys: Map<string, string> } | undefined
+let authExportCache: { at: number; entries: Map<string, AuthCredential> } | undefined
 
 /**
- * OpenCode 的多账号 key 只在 `opencode auth export` 里（auth.json 只有当前活动账号）。
- * 异步刷新 + 30s 缓存：不阻塞 TUI；优先用同名 provider 的 key，避免把 Wen 的 key 用到 Huan 上。
+ * OpenCode 的多账号凭据只在 `opencode auth export` 里（auth.json 只有当前活动账号）。
+ * 异步刷新 + 30s 缓存：不阻塞 TUI；优先用同名 provider 的凭证，避免把 Wen 的 key 用到 Huan 上。
+ * 同时认两类：`type: "key"`（API key）与 `type: "oauth"` + `access`（官方订阅的 OAuth token）。
  * 只在 Bun/opencode 运行时执行（Node 单测里 process.execPath 是 node，跳过）。
  */
 export async function refreshAuthExport(force = false): Promise<void> {
   const now = Date.now()
   if (!force && authExportCache && now - authExportCache.at < 30_000) return
-  const keys = new Map<string, string>(authExportCache?.keys ?? [])
+  const entries = new Map<string, AuthCredential>(authExportCache?.entries)
   if (process.versions.bun) {
     try {
       const result = (await execFileAsync(process.execPath, ["auth", "export"], {
@@ -128,24 +165,20 @@ export async function refreshAuthExport(force = false): Promise<void> {
       const end = raw.lastIndexOf("]")
       if (start >= 0 && end > start) {
         const list = JSON.parse(raw.slice(start, end + 1)) as AuthExportEntry[]
-        keys.clear()
+        entries.clear()
         for (const item of list) {
           const id = item?.integrationID
           if (typeof id !== "string" || !id) continue
-          const value = item.value
-          const key =
-            value && typeof value === "object" && typeof (value as { key?: unknown }).key === "string"
-              ? (value as { key: string }).key
-              : undefined
-          if (!key) continue
-          if (!keys.has(id) || item.active === true) keys.set(id, key)
+          const found = credentialOf(item.value)
+          if (!found) continue
+          if (!entries.has(id) || item.active === true) entries.set(id, found)
         }
       }
     } catch {
       // export 不可用：保留旧缓存，回落到 auth.json / env
     }
   }
-  authExportCache = { at: now, keys }
+  authExportCache = { at: now, entries }
 }
 
 function envKeyFor(providerID: string): string | undefined {
@@ -177,9 +210,25 @@ export interface ResolvedAiConfig {
   baseUrl: string
   apiKey: string
   protocol: "openai-compatible" | "anthropic"
+  /** 凭证来自 OpenCode 官方订阅的 OAuth（`st_…`），不是 API key。 */
+  oauth: boolean
 }
 
-export function resolveAiConfigFor(providerID: string, modelID: string): ResolvedAiConfig | undefined {
+/** `resolveAiConfigFor` 的额外覆盖项（测试/转接头注入）。 */
+export interface ResolveAiOverrides {
+  /** 官方订阅 OAuth 时用本机转接头地址（补 `x-opencode-session`），见 zen-proxy.ts。 */
+  zenProxyBaseUrl?: string
+}
+
+function isZenProvider(providerID: string): boolean {
+  return providerID === "opencode-go" || providerID === "opencode" || providerID.startsWith("opencode-")
+}
+
+export function resolveAiConfigFor(
+  providerID: string,
+  modelID: string,
+  overrides?: ResolveAiOverrides,
+): ResolvedAiConfig | undefined {
   const config = readGlobalConfig()
   const provider = config?.providers?.[providerID]
   const isCommandCode = providerID === "commandcode" || providerID.startsWith("cmdc-")
@@ -192,15 +241,20 @@ export function resolveAiConfigFor(providerID: string, modelID: string): Resolve
         : providerID.startsWith("deepseek")
           ? "https://api.deepseek.com/v1"
           : ""
+  const credential = authCredentialFor(providerID)
+  const apiKey = credential?.key ?? envKeyFor(providerID)
+  const oauth = credential?.oauth === true
+  // 官方订阅（OAuth）只能经本机转接头：Go 推理接口强制要求 x-opencode-session，
+  // 而 standalone 传输层不能加自定义头（见 zen-proxy.ts 头部说明）。
+  const zenProxy = oauth && isZenProvider(providerID) ? overrides?.zenProxyBaseUrl : undefined
   const baseUrl =
-    (typeof provider?.settings?.baseURL === "string" && provider.settings.baseURL) || fallback
-  const apiKey = authKeyFor(providerID) ?? envKeyFor(providerID)
+    zenProxy || (typeof provider?.settings?.baseURL === "string" && provider.settings.baseURL) || fallback
   if (!baseUrl || !modelID || !apiKey) return undefined
   const protocol =
     typeof provider?.package === "string" && provider.package.includes("anthropic")
       ? "anthropic"
       : "openai-compatible"
-  return { providerID, model: modelID, baseUrl, apiKey, protocol }
+  return { providerID, model: modelID, baseUrl, apiKey, protocol, oauth }
 }
 
 /**

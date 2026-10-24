@@ -59,6 +59,7 @@ test("model sync follows the active session, patches model/key, and survives con
       baseUrl,
       apiKey: `key-${providerID}`,
       protocol: "openai-compatible" as const,
+      oauth: false,
     }
   }
 

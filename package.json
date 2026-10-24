@@ -1,7 +1,7 @@
 {
   "name": "oc-pet",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.1.1",
   "description": "OpenCode 桌宠适配层：复用 dsh-pet 的桌面渲染与宿主半侧，不改上游源码。",
   "type": "module",
   "exports": {

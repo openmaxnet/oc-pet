@@ -157,7 +157,43 @@ node scripts/verify-upstream.mjs
 - 行为：多会话用不同模型时，宠物跟着**最近活跃的那个**切；不是每个会话一只。`/pet-balance`、`/pet-whisper`、`/pet-chat` 与桌面右键菜单都使用这条活跃会话的模型。
 - 局限：`opencode auth export` 不可用时回退 `auth.json`/env；多账号 key 只在 OpenCode DB 且 export 失败时需 `/pet-ai`；`/pet-ai` 里改模型会被同步覆盖。
 
-## 10. 已知限制 / 下一步（更新）
+## 10. 官方订阅 OAuth（第四轮，2026-10-24）
+
+背景：用户希望不开导出 API key，直接用 OpenCode 官方订阅（`opencode-go`，Go/Go Plus）的登录态喂给桌宠。
+
+实测结论：
+
+| 项 | 结果 |
+| --- | --- |
+| `opencode auth export` 是否含 OAuth token | ✅ `type: "oauth"` 记录带 `access`（`st_…`）/`refresh`/`expires`/`metadata.accountID` |
+| OAuth token 能否当 Bearer 调 `/zen/go/v1/models` | ✅ 200 |
+| `POST /zen/go/v1/chat/completions` 无会话头 | ❌ 400 `MissingSessionID` |
+| 同上 + `x-opencode-session` | ✅ 200（`opencode.billing_source = "go"`） |
+| `https://opencode.ai/inference/go/openai/v1/chat/completions`（官方文档「应用直连」） | 同样要求 `x-opencode-session`；`?x-opencode-session=` 查询参数无效 |
+| `/zen/v1`（Zen 按量，非 Go） | ❌ 402 `Insufficient account funds`（订阅不含按量余额） |
+| `GET /zen/go/v1/usage` | ✅ 200，无需会话头（余额不需要转接头） |
+| standalone 传输层能否加自定义头 | ❌ 只发 `authorization`/`content-type`/`accept`；设置 schema strict，无 headers 字段 |
+
+实现：
+
+- `src/opencode.ts`：`authCredentialFor()` 同时认 `type:"key"` 与 `type:"oauth"`（取 `access`）；provider 别名链（`opencode-go`→`opencode`、`cmdc-*`→`commandcode`、`deepseek*`→`deepseek`）在 export 缓存与 `auth.json` 两条路径上统一生效（此前 export 缓存只按精确 id 查，`opencode-go` 拿不到 key）。
+- `src/zen-proxy.ts`：回环转接头，补 `x-opencode-session` + 自有 UA，流式转发；会话 ID 落盘 `$DSH_HOME/dsh-pet/zen-session-id`；只代理 `/v1/*`。
+- `src/plugin-tui.ts`：setup 时起转接头并把地址注入 `resolveAiConfigFor`；cleanup 关闭。
+
+验证（OpenCode 2.1.4 / Bun 1.4.4 / dsh-pet 0.3.8）：
+
+```text
+Zen 转接头就绪：http://127.0.0.1:64977/v1 → https://opencode.ai/inference/go/openai/v1（session=5401a13e…）
+OpenCode 官方凭证：oauth 订阅
+模型同步：opencode-go/deepseek-v4.1-flash（官方订阅 OAuth，经 http://127.0.0.1:64977/v1 本机转接）
+POST /standalone-ai/test → {"ok":true,"message":"连接成功！模型响应正常。"}
+POST /whisper?pet=main&surface=desktop → {"ok":true,"text":"吃撑啦……先瘫一会儿嘛～","image":"吃饱饱摸肚子"}
+```
+
+- `npx tsc --noEmit` 通过；单测 14/14 通过（model-sync 用例补 `oauth: false`）。
+- 已知边界：转接头随 TUI 生命周期；`keepAlive=true` 且 TUI 全关后宠物仍在但 AI 不可用。
+
+## 11. 已知限制 / 下一步（更新）
 
 1. **必须有 Node.js ≥ 22.12**（上游 standalone engines）。OpenCode 自身是 Bun 单文件，不保证用户机器有 Node；后续可改用 Electron app 入口或打包 Node runtime。
 2. **没有 Web 浮层**：OpenCode 没有 DSH 的网页插件插槽，宠物只以桌面透明窗存在。
@@ -169,5 +205,5 @@ node scripts/verify-upstream.mjs
 8. **菜单裁剪依赖 `sprite.js` 三个字符串锚点**：上游大改会明确报错（契约测试红），需更新 `src/menu-patch.mjs`。
 9. **host 的 `sections.balance` 仍为 unsupported**：余额动画/气泡由适配层驱动，不写 host 的 balance 段；如果有第三方读 `/state` 的 balance 段，会看到 unsupported。
 10. **通知未做“聚焦时也弹”选项**：当前固定失焦才弹，避免打断。
-11. **provider key 优先 `opencode auth export`**（多账号 per-provider），回退 `auth.json`/env；export 不可用时需 `/pet-ai` 手动填。
+11. **provider 凭证优先 `opencode auth export`**（多账号 per-provider，API key 与 OAuth access 都认），回退 `auth.json`/env；export 不可用时需 `/pet-ai` 手动填。
 12. **模型/config 同步最多 5s 延迟；key 热更新最多 30s（export 缓存）**；`/pet-ai` 改模型会被覆盖，切模型请用 `/models`。
