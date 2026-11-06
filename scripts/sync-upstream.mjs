@@ -9,7 +9,7 @@
  * 契约测试不通过 → 自动回滚到升级前版本，并以 1 退出。
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -71,21 +71,28 @@ function verify() {
 
 function apply(version) {
   const before = installedVersion()
+  const beforeUpstream = existsSync(upstreamFile) ? readFileSync(upstreamFile, "utf8") : null
   console.log(`[sync] dsh-pet: ${before} -> ${version}`)
   const install = run(["install", `dsh-pet@${version}`, "--save-exact", "--no-audit", "--no-fund"])
   if (install.status !== 0) {
     throw new Error(`npm install dsh-pet@${version} 失败`)
   }
 
+  // verify 会核对 package.json 与 upstream.json 的版本；先在内存清单里切到目标版本，
+  // 失败时再把原文件恢复，避免「升级永远卡在版本不一致」的死循环。
+  const upstream = beforeUpstream ? JSON.parse(beforeUpstream) : {}
+  upstream.version = version
+  writeFileSync(upstreamFile, JSON.stringify(upstream, null, 2) + "\n")
+
   if (!verify()) {
     console.error(`\n[sync] 契约测试失败，回滚到 ${before} ...`)
     run(["install", `dsh-pet@${before}`, "--save-exact", "--no-audit", "--no-fund"])
+    if (beforeUpstream !== null) writeFileSync(upstreamFile, beforeUpstream)
+    else rmSync(upstreamFile, { force: true })
     console.error("[sync] 已回滚。请先适配 src/events.ts / src/daemon.ts / src/config.ts，再升级。")
     process.exit(1)
   }
 
-  const upstream = existsSync(upstreamFile) ? readJson(upstreamFile) : {}
-  upstream.version = version
   upstream.installedAt = new Date().toISOString().slice(0, 10)
   writeFileSync(upstreamFile, JSON.stringify(upstream, null, 2) + "\n")
   console.log(`[sync] 升级完成：dsh-pet@${version}（契约测试通过，upstream.json 已更新）`)

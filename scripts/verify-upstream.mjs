@@ -14,10 +14,10 @@ import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { applyMenuPatch, MENU_PATCH_MARKER } from "../src/menu-patch.mjs"
+import { applyMenuPatch, menuFileFor, MENU_PATCH_MARKER } from "../src/menu-patch.mjs"
 
 const require = createRequire(import.meta.url)
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -85,16 +85,17 @@ async function main() {
     `package.json 声明 engines.node（${pkg.engines?.node ?? "缺失"}）`,
   )
 
-  // 菜单裁剪补丁：OpenCode 不需要「打开网站 / 显示位置」，余额改走第三方菜单
-  const spriteFile = join(pkgRoot, "runtime", "electron-helper", "sprite.js")
-  const menuPatch = applyMenuPatch(spriteFile)
+  // 菜单裁剪补丁：OpenCode 不需要「显示位置」，余额改走第三方菜单。
+  // 0.4+ 菜单拆到 sprite/menu.js，standalone 的「打开网站」改为「打开 AI 设置」，保留。
+  const menuFile = menuFileFor(pkgRoot)
+  check(existsSync(menuFile), `菜单文件存在（${basename(menuFile)}）`)
+  const menuPatch = applyMenuPatch(menuFile)
   check(menuPatch.ok, `菜单裁剪补丁已应用（${menuPatch.reason ?? (menuPatch.applied ? "applied" : "already")}）`)
   if (menuPatch.ok) {
-    const sprite = readFileSync(spriteFile, "utf8")
-    check(sprite.includes(MENU_PATCH_MARKER), "sprite.js 含裁剪 marker")
-    check(!sprite.includes("tools.push({ label: '查看余额'"), "内置「查看余额」已移除")
-    check(!sprite.includes("S.displayMenuBranch(),"), "内置「显示位置」已移除")
-    check(!sprite.includes("action: 'open-site'"), "内置「打开网站」已移除")
+    const menu = readFileSync(menuFile, "utf8")
+    check(menu.includes(MENU_PATCH_MARKER), `${basename(menuFile)} 含裁剪 marker`)
+    check(!menu.includes("action: 'show-balance'"), "内置「查看余额」已移除")
+    check(!menu.includes("S.displayMenuBranch(),"), "内置「显示位置」已移除")
   }
 
   // 2) 临时 HOME + display:web：不弹 Electron 窗口，但动作端点（surface=web）可用
@@ -254,9 +255,26 @@ async function main() {
 
     const aiSettings = await fetchJson(`${base}/standalone-ai/settings`, { headers })
     check(
-      aiSettings.ok && typeof aiSettings.body?.enabled === "boolean",
-      "GET /standalone-ai/settings 成功",
+      aiSettings.ok && typeof aiSettings.body?.hasKey === "boolean" && !("enabled" in (aiSettings.body ?? {})),
+      "GET /standalone-ai/settings 成功（hasKey，无遗留 enabled）",
     )
+
+    // 模拟 model-sync 的完整写入：0.4 起 schema 是 strict，带上已删除的 enabled 会 400。
+    const aiSave = await fetchJson(`${base}/standalone-ai/settings`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        protocol: "openai-compatible",
+        baseUrl: "https://api.example.test/v1",
+        model: "contract-model",
+        apiKey: "contract-test-key",
+        automaticWhispers: true,
+        whisperIntervalSec: 300,
+        maxTokens: 1024,
+        timeoutMs: 30_000,
+      }),
+    })
+    check(aiSave.ok && aiSave.body?.hasKey === true, "POST /standalone-ai/settings 接受模型同步负载")
 
     const display = await fetchJson(`${base}/dsh-pet-7340/pet-display`, {
       method: "POST",

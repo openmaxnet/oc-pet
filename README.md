@@ -146,13 +146,13 @@ OpenCode 没有 DSH 的“网页端 / 打开软件”，所以适配层会对桌
 
 | 项 | 处理 |
 | --- | --- |
-| 打开网站 / 打开软件 | 移除（OpenCode 无对应宿主入口） |
+| 打开 AI 设置（standalone） | 保留（与 `/pet-ai` 打开的是同一页） |
 | 查看余额 | 内置项移除，改到「更多 → 查看余额」（由插件查询并驱动动画/气泡） |
 | 显示位置 | 移除（OpenCode 只有桌面端；显隐用 `/pet`） |
-| 碎碎念 / 对话 | 保留（AI 已配置，走 host 原生 `/whisper`、`/chat`） |
+| 待办事项 / 碎碎念 / 对话 | 保留（上游 0.4+ 新增待办；AI 走 host 原生 `/whisper`、`/chat`） |
 | 回到初始位置 / 重载配置 / 动作 | 保留 |
 
-裁剪是幂等的运行时补丁（`src/menu-patch.mjs`），契约测试会检查 marker；上游菜单结构变了会明确失败。
+裁剪是幂等的运行时补丁（`src/menu-patch.mjs`），契约测试会检查 marker；上游 0.4+ 已把菜单从 `sprite.js` 拆到 `sprite/menu.js`，补丁会自动选择新版文件并兼容旧版内联结构。
 
 ## 生命周期
 
@@ -186,14 +186,14 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 - `/work-status` POST + DELETE；
 - `/lock` → `/anim` → `/broadcast` → `/lock/release`；
 - `/menu/item` 注册 / 查询 / 删除；
-- `/standalone-ai/settings`；
+- `/standalone-ai/settings` GET + POST（模拟模型同步负载，校验 strict schema）；
 - `/pet-display`、`/shutdown`。
 
 全部通过才允许升级。细节与破坏性变更处理见 [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md)。
 
 ## 已验证 / 未完成
 
-已验证（2026-10-24，Windows + OpenCode 2.1.3 / 2.1.4 + dsh-pet 0.3.8）：
+已验证（2026-11-06，Windows + OpenCode 2.2.5 + dsh-pet 0.4.4；功能基线 2026-10-24 / OpenCode 2.1.x）：
 
 - CLI 插件加载、Bun 运行时、`spawn`、文件系统；
 - 事件流 → 6 档工作状态：`idle → working → result → success` 真实会话跑通；
@@ -204,7 +204,8 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 - 系统通知：已接入 `context.attention.notify`（主实例 / `when: blurred`；真实 toast 未做失焦自动化验证）；
 - 官方订阅（OAuth）：`/standalone-ai/test` 返回 `ok:true`、`/whisper` 真实碎碎念成功、`/zen/go/v1/usage` 读到订阅用量；全程未导出任何 key；
 - 复用 / 拉起 / 正常停 / 强杀 watchdog 兜底；
-- 项目发现、`cli.json` 本地目录两种加载路径。
+- 项目发现、`cli.json` 本地目录两种加载路径；
+- 上游 0.4.4：契约测试 34 项全过；菜单拆分到 `sprite/menu.js` 后补丁正常；模型同步改用 `hasKey` 判定并去掉已删除的 `enabled` 字段。
 
 未完成 / 已知边界：
 
@@ -215,7 +216,7 @@ node scripts/sync-upstream.mjs --latest   # 装最新；失败自动回滚
 - **provider 凭证来源**：优先 `opencode auth export`（多账号 per-provider；`type: "key"` 与 `type: "oauth"` 都认，后者是官方订阅的 `st_…`），回退 `auth.json` / 环境变量；export 不可用时用 `/pet-ai` 手动填。key 缓存 30s。
 - **官方订阅经本机转接头**：`opencode-go` 等 `opencode` 系 provider 的 OAuth 凭证必须走回环代理补 `x-opencode-session`（见上），代理随 TUI 生命周期；`keepAlive=true` 时 TUI 全关后 AI 暂不可用。
 - **模型同步最多 5s 延迟**；key 热更新最多 30s；`/pet-ai` 里改模型会被跟随逻辑覆盖，切模型请用 `/models`。
-- **菜单裁剪依赖上游 `sprite.js` 结构**：上游大改时 `menu-patch.mjs` 会明确报错，需同步更新（契约测试会红）。
+- **菜单裁剪依赖上游菜单结构**：0.4+ 是 `sprite/menu.js`，0.3.x 是内联在 `sprite.js`；上游再改时 `menu-patch.mjs` 会明确报错，需同步更新（契约测试会红）。
 
 详细验证记录见 [`docs/VALIDATION.md`](docs/VALIDATION.md)。
 

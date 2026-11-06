@@ -8,8 +8,6 @@
  * 设计约束：不 import 上游 dsh-pet 的 JS 入口（它依赖三个 DSH 私有包），
  * 只把它当 npm 包里的一支 CLI + 本地 HTTP 服务来用。
  */
-import { join } from "node:path"
-
 import { createLogger, resolveOptions } from "./config"
 import {
   addLease,
@@ -25,7 +23,7 @@ import { WorkStatusReducer } from "./events"
 import { PetHttp, RootHttp, WorkStatusClient } from "./work-status"
 import { registerPetCommands } from "./commands"
 import { cleanupOldWatchdog, startWatchdog } from "./watchdog"
-import { applyMenuPatch } from "./menu-patch.mjs"
+import { applyMenuPatch, menuFileFor } from "./menu-patch.mjs"
 import { openAiSettings as openAiSettingsPage } from "./ai"
 import { createModelSync } from "./model-sync"
 import { authCredentialFor, authKeyFor, currentModel, refreshAuthExport, resolveAiConfigFor } from "./opencode"
@@ -143,11 +141,11 @@ export default {
       `OpenCode 官方凭证：${openCodeCredential ? (openCodeCredential.oauth ? "oauth 订阅" : "api key") : "未找到"}`,
     )
 
-    // 1) 桌面菜单裁剪：OpenCode 不需要「打开网站 / 显示位置」，内置「查看余额」改走第三方菜单
-    const spriteFile = join(resolveUpstreamRoot(), "runtime", "electron-helper", "sprite.js")
-    const patch = applyMenuPatch(spriteFile)
+    // 1) 桌面菜单裁剪：OpenCode 不需要「显示位置」，内置「查看余额」改走第三方菜单
+    const menuFile = menuFileFor(resolveUpstreamRoot())
+    const patch = applyMenuPatch(menuFile)
     if (!patch.ok) logger.warn(`桌面菜单裁剪失败：${patch.reason ?? "unknown"}`)
-    else if (patch.applied) logger.info("桌面菜单已裁剪：移除 打开网站 / 查看余额 / 显示位置")
+    else if (patch.applied) logger.info("桌面菜单已裁剪：移除 内置查看余额 / 显示位置")
 
     // 2) daemon
     let runtime: PetRuntime

@@ -1,12 +1,12 @@
-# 验证记录（2026-10-24）
+# 验证记录（2026-10-24，2026-11-06 更新）
 
 环境：
 
 - Windows 10/11 x64，双屏（5120×1392 工作区）
 - Node `v24.18.0`，npm `11.16.0`
-- OpenCode `v2.1.3`（内嵌 Bun `1.4.4`，Node 兼容 `26.3.0`）
-- `dsh-pet@0.3.8`（npm 安装到 `oc-pet/node_modules`，未改源码）
-- Electron `43.3.0`（由上游自动下载到 `~/.dsh/electron`，137.7 MB，20.1s）
+- OpenCode `v2.2.5`（当前；功能基线实测于 `v2.1.3` / `v2.1.4`，内嵌 Bun `1.4.4`）
+- `dsh-pet@0.4.4`（当前；功能基线为 `0.3.8`，均以 npm 安装到 `oc-pet/node_modules`，未改上游源码）
+- Electron 由上游自动下载到 `~/.dsh/electron`
 
 ## 1. CLI 插件运行时
 
@@ -109,14 +109,14 @@ cd oc-pet
 node scripts/verify-upstream.mjs
 ```
 
-结果：**32 项全过**（版本/入口文件/engines/菜单裁剪 marker/三个移除项/runtime 字段/health/config/state/work-status POST+DELETE/lock→anim→broadcast→release/menu item 注册·查询·删除/standalone-ai settings/pet-display/shutdown）。
+结果：**34 项全过**（版本/入口文件/engines/菜单裁剪 marker/两个移除项/runtime 字段/health/config/state/work-status POST+DELETE/lock→anim→broadcast→release/menu item 注册·查询·删除/standalone-ai settings GET+POST/pet-display/shutdown）。
 
 ## 8. 剩余功能接线（第二轮）
 
 ### AI 自动配置
 
 - 读取 OpenCode `opencode.json` + `auth.json`，当前模型 `cmdc-wen` / `deepseek/deepseek-v4.1-flash`，Base URL `https://api.commandcode.ai/provider/v1`
-- `POST /standalone-ai/settings` 后 `GET` 返回：`enabled=true`、`hasKey=true`、`automaticWhispers=true`、`whisperIntervalSec=300`
+- `POST /standalone-ai/settings` 后 `GET` 返回：`hasKey=true`、`automaticWhispers=true`、`whisperIntervalSec=300`（0.4+ 已移除 `enabled`；历史 0.3.8 记录为 `enabled=true`）
 - `POST /whisper?pet=main&surface=desktop` → `{ok:true, text:"他太过分了，我都想替你骂回去。", image:"要不直接骂他"}`
 - `POST /chat?pet=main&surface=desktop` `{"text":"你好呀，今天心情怎么样？"}` → `{ok:true, text:"挺好的呀，傍晚了，有点想偷个懒～"}`
 
@@ -130,9 +130,9 @@ node scripts/verify-upstream.mjs
 
 ### 菜单裁剪
 
-- `sprite.js` 含 marker `oc-pet: menu trimmed for OpenCode`
-- 已移除：打开网站 / 内置查看余额 / 显示位置
-- 保留：碎碎念 / 对话 / 回到初始位置 / 重载配置 / 动作
+- 0.4+ 的 `sprite/menu.js`（或 0.3.x 的 `sprite.js`）含 marker `oc-pet: menu trimmed for OpenCode`
+- 已移除：内置查看余额 / 显示位置
+- 保留：打开 AI 设置（standalone）/ 待办事项 / 碎碎念 / 对话 / 回到初始位置 / 重载配置 / 动作
 - 插件 setup 应用补丁后调用 `POST /reload` 重启 helper，菜单即时生效
 
 ### 系统通知
@@ -152,7 +152,7 @@ node scripts/verify-upstream.mjs
   - 没有 key/provider 配置 → 保持上一份 AI 设置，只告警一次；
   - 每次同步都会重新读 `opencode.json` / `auth.json`，所以配置热重载最迟 5s 生效；插件自身热重载会重新 setup。
 - 单测：`events` 13 项 + `model-sync` 1 项 = **14 项全过**（首次全量、同模型不重复写、同 endpoint 换 provider patch、换 endpoint 全量、无 key 只告警一次）。
-- 实测：当前活跃会话 `cmdc-wen/deepseek/deepseek-v4.1-flash`；热重载后日志出现「模型同步：…」，AI 设置保持 `enabled/hasKey`。
+- 实测：当前活跃会话 `cmdc-wen/deepseek/deepseek-v4.1-flash`；热重载后日志出现「模型同步：…」，AI 设置保持 `hasKey`（0.4+ 不再有 `enabled`）。
 - 凭据：`opencode auth export` 实测返回 5 个 per-provider key（`opencode-go`、`deepseekwild`、`cmdc-wen`、`cmdc-kun`、`cmdc-huan`）。适配层优先用同名 provider 的 key，避免把 Wen 的 key 用到 Huan 上；`cmdc-huan` 账号本身额度不足，真实调用未能完成（这是账号状态，不是插件问题），同步逻辑由单测覆盖。
 - 行为：多会话用不同模型时，宠物跟着**最近活跃的那个**切；不是每个会话一只。`/pet-balance`、`/pet-whisper`、`/pet-chat` 与桌面右键菜单都使用这条活跃会话的模型。
 - 局限：`opencode auth export` 不可用时回退 `auth.json`/env；多账号 key 只在 OpenCode DB 且 export 失败时需 `/pet-ai`；`/pet-ai` 里改模型会被同步覆盖。
@@ -202,8 +202,33 @@ POST /whisper?pet=main&surface=desktop → {"ok":true,"text":"吃撑啦……先
 5. **全局 cli.json 热加载**：实验时容易误加载到用户正在跑的 TUI；文档已标注。
 6. **`/state` 的 idle 形态**是 `{ state: null, task: null }`，不是 `null`；消费端按 `state` 判断。
 7. **模型跟随是单宠物口径**：多会话不同模型时跟随最近活跃会话；不是每个会话一只。
-8. **菜单裁剪依赖 `sprite.js` 三个字符串锚点**：上游大改会明确报错（契约测试红），需更新 `src/menu-patch.mjs`。
+8. **菜单裁剪依赖上游菜单结构**：0.4+ 是 `sprite/menu.js`，0.3.x 内联在 `sprite.js`；上游再改会明确报错（契约测试红），需更新 `src/menu-patch.mjs`。
 9. **host 的 `sections.balance` 仍为 unsupported**：余额动画/气泡由适配层驱动，不写 host 的 balance 段；如果有第三方读 `/state` 的 balance 段，会看到 unsupported。
 10. **通知未做“聚焦时也弹”选项**：当前固定失焦才弹，避免打断。
 11. **provider 凭证优先 `opencode auth export`**（多账号 per-provider，API key 与 OAuth access 都认），回退 `auth.json`/env；export 不可用时需 `/pet-ai` 手动填。
 12. **模型/config 同步最多 5s 延迟；key 热更新最多 30s（export 缓存）**；`/pet-ai` 改模型会被覆盖，切模型请用 `/models`。
+
+## 12. 上游 0.4.4 适配（2026-11-06）
+
+升级路径：`dsh-pet@0.3.8 → 0.4.4`（npm latest），OpenCode `2.2.5`，Node `24.18.0`。
+
+上游破坏性变化与处理：
+
+| 变化 | 处理 |
+| --- | --- |
+| 右键菜单从 `runtime/electron-helper/sprite.js` 拆到 `sprite/menu.js` | `menu-patch.mjs` 新增 `menuFileFor()`，优先新版文件、回退旧版；`plugin-tui.ts` 与契约测试同步改用 |
+| standalone 的首项从「打开网站」改为「打开 AI 设置」 | 保留该项（与 `/pet-ai` 同页）；只移除内置「查看余额」和「显示位置」 |
+| `/standalone-ai/settings` 删除 `enabled`，schema 为 strict | `model-sync` 改用 `hasKey` 判断是否已配置，请求不再发送 `enabled`；单测同步更新 |
+| `POST /standalone-ai/settings` 新增 strict 校验 | 契约测试增加完整模型同步负载的 POST，防止以后静默 400 |
+| `sync-upstream.mjs` 原先在 verify 之后才写版本号 | 改为 verify 前先切目标版本、失败时恢复原 `upstream.json`，修复“升级必然版本不一致”的死循环 |
+
+验证结果：
+
+```text
+npm run typecheck            # 通过
+npm run test:unit            # 14/14 通过
+node scripts/sync-upstream.mjs --latest
+                             # dsh-pet 0.4.4，契约测试 34 项全过
+```
+
+运行时：停止旧 daemon → 升级 → 由 TUI 插件重新拉起；桌面菜单显示「打开 AI 设置 / 待办事项 / 碎碎念 / 对话 / 动作…」，无内置「查看余额」「显示位置」。

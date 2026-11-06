@@ -12,7 +12,6 @@ interface RootClient {
 }
 
 interface AiSettings {
-  enabled?: boolean
   hasKey?: boolean
   model?: string
   baseUrl?: string
@@ -104,9 +103,11 @@ export function createModelSync(deps: ModelSyncDeps): ModelSync {
         current = undefined
       }
 
-      const enabled = current?.enabled === true && current?.hasKey === true
-      const sameEndpoint = enabled && current?.baseUrl === resolved.baseUrl
-      const first = !enabled
+      // 上游 0.4 起设置 schema 删掉了 enabled（strict 模式会拒绝该字段）；
+      // AI 是否可用改由 hasKey + baseUrl/model 判断。
+      const configured = current?.hasKey === true
+      const sameEndpoint = configured && current?.baseUrl === resolved.baseUrl
+      const first = !configured
 
       const body = sameEndpoint
         ? { model: resolved.model, apiKey: resolved.apiKey }
@@ -115,7 +116,6 @@ export function createModelSync(deps: ModelSyncDeps): ModelSync {
             baseUrl: resolved.baseUrl,
             model: resolved.model,
             apiKey: resolved.apiKey,
-            enabled: true,
             automaticWhispers: first ? true : (current?.automaticWhispers ?? true),
             whisperIntervalSec: current?.whisperIntervalSec ?? 300,
             maxTokens: current?.maxTokens ?? 1024,

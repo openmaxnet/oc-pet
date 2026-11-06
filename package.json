@@ -34,7 +34,7 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
-    "dsh-pet": "0.3.8"
+    "dsh-pet": "0.4.4"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.1.0"

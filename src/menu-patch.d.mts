@@ -1,4 +1,5 @@
 export declare const MENU_PATCH_MARKER: string
+export declare function menuFileFor(upstreamRoot: string): string
 export declare function applyMenuPatch(filePath: string): {
   ok: boolean
   applied: boolean

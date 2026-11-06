@@ -19,7 +19,7 @@ test("model sync follows the active session, patches model/key, and survives con
     id: "deepseek/deepseek-v4.1-flash",
   }
   let resolveOk = true
-  let settings: Record<string, unknown> = { enabled: false, hasKey: false }
+  let settings: Record<string, unknown> = { hasKey: false }
   const posted: Posted[] = []
   const logs: string[] = []
 
@@ -43,7 +43,7 @@ test("model sync follows the active session, patches model/key, and survives con
     },
     async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
       posted.push({ path, body })
-      settings = { ...settings, ...body, enabled: true, hasKey: true }
+      settings = { ...settings, ...body, hasKey: true }
       return settings as unknown as T
     },
   }
@@ -77,7 +77,7 @@ test("model sync follows the active session, patches model/key, and survives con
     await sync.syncOnce()
     assert.equal(posted.length, 1)
     assert.equal(posted[0].body.model, "deepseek/deepseek-v4.1-flash")
-    assert.equal(posted[0].body.enabled, true)
+    assert.equal("enabled" in posted[0].body, false, "不再发送上游已删除的 enabled 字段")
     assert.equal(posted[0].body.automaticWhispers, true)
     assert.equal(posted[0].body.baseUrl, "https://api.commandcode.ai/provider/v1")
 

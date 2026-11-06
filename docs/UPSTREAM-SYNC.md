@@ -13,7 +13,7 @@
 | runtime 文件 | `<DSH_HOME>/dsh-pet/standalone-runtime.json` 的 `pid` / `port` / `token` | 中 | `src/daemon.ts`、`src/watchdog.mjs` |
 | HTTP（前缀） | `/config`、`/state`、`/work-status`、`/lock`、`/anim`、`/broadcast`、`/whisper`、`/chat`、`/menu/*`、`/pet-display`、`/reload` | 中 | `src/work-status.ts`、`src/balance.ts`、`src/commands.ts` |
 | HTTP（根） | `/health`、`/standalone-ai/settings`、`/standalone-ai/test`、`/shutdown` | 中 | `src/ai.ts`、`src/daemon.ts` |
-| 桌面菜单结构 | `runtime/electron-helper/sprite.js` 里的 `const tools` / `tools.push` / `S.displayMenuBranch()` | 低 | `src/menu-patch.mjs` |
+| 桌面菜单结构 | 0.4+：`runtime/electron-helper/sprite/menu.js` 的 `tools` / `S.displayMenuBranch()`；0.3.x：内联在 `sprite.js` | 低 | `src/menu-patch.mjs` |
 | OpenCode 凭据/配置 | `~/.config/opencode/opencode.json`、`~/.local/share/opencode/auth.json`（只读） | 中 | `src/opencode.ts` |
 | 事件 | 只用 OpenCode 自己的事件（不依赖上游） | — | `src/events.ts` |
 | 素材/渲染 | 全部在上游包内，适配层不接触 | 高 | 无需改 |
@@ -41,7 +41,7 @@ node scripts/sync-upstream.mjs --apply 0.3.9
 
 1. 校验 `dsh-pet` 版本与 `upstream.json` 一致；
 2. 校验我们实际用到的入口文件存在；
-3. 应用/检查菜单裁剪补丁（marker + 三个移除项）；
+3. 应用/检查菜单裁剪补丁（marker + 两个移除项）；
 4. 用临时 `DSH_HOME` + `display: web` 启动 standalone（不弹窗，但动作端点可用）；
 5. 校验 runtime 文件字段；
 6. 校验 `/health`、`/config`、`/state`、`/work-status` POST+DELETE；
@@ -53,20 +53,22 @@ node scripts/sync-upstream.mjs --apply 0.3.9
 
 ## 菜单裁剪补丁
 
-OpenCode 没有 DSH 的「网页端 / 打开软件 / 显示位置」，所以桌面 helper 的右键菜单需要裁掉三项：
+OpenCode 只有桌面端，所以桌面 helper 的右键菜单需要裁掉两项：
 
-- 打开网站 / 打开软件（`open-site`）
 - 内置 查看余额（改由第三方菜单「更多 → 查看余额」承接）
 - 显示位置（`displayMenuBranch`，网页/两者/都不在 OpenCode 无意义）
 
-`src/menu-patch.mjs` 对 `runtime/electron-helper/sprite.js` 做**幂等字符串替换**：
+0.4+ 的 `open-site` 在 standalone 形态下变成「打开 AI 设置」，与 `/pet-ai` 是同一页，因此保留；0.3.x 的「打开网站 / 打开软件」仍随旧版 tools 块一起裁掉。
 
+`src/menu-patch.mjs` 对菜单文件做**幂等字符串替换**：
+
+- `menuFileFor()` 优先 `runtime/electron-helper/sprite/menu.js`（0.4+），回退 `runtime/electron-helper/sprite.js`（0.3.x）；
 - 有 marker（`oc-pet: menu trimmed for OpenCode`）就跳过；
-- 找不到 `const tools` / `tools.push({ label: '查看余额'...` / `S.displayMenuBranch(),` 就返回明确 reason；
+- 找不到 `查看余额` / `S.displayMenuBranch(),` 就返回明确 reason；
 - 插件 setup 时在 `ensureDaemon` 之前应用；如果 daemon 已在跑，会 `POST /reload` 让 helper 重载；
 - `verify-upstream.mjs` 也会应用并检查 marker，所以升级时如果上游改了菜单结构，契约测试会红。
 
-修复方式：打开新版 `sprite.js` 的 `onContextMenu`，按新的字符串更新 `menu-patch.mjs` 的三个锚点；不要扩大成业务补丁。
+修复方式：打开新版菜单文件的 `onContextMenu`，按新的字符串更新 `menu-patch.mjs` 的锚点；不要扩大成业务补丁。
 
 ## AI 配置 / 模型跟随
 
@@ -84,7 +86,8 @@ OpenCode 没有 DSH 的「网页端 / 打开软件 / 显示位置」，所以桌
 - 同一 endpoint 只换模型 → 只 patch `model + apiKey`；
 - 换 provider/endpoint → 整份更新；
 - 首次配置/没有 key → 整份写入并打开自动碎碎念；
-- 读不到 provider 配置/凭据 → 保持上一份设置并写一次日志（不会让宠物哑掉）。
+- 读不到 provider 配置/凭据 → 保持上一份设置并写一次日志（不会让宠物哑掉）；
+- 上游 0.4+ 的设置 schema 是 strict 且删除了 `enabled`：可用性只看 `hasKey` + `baseUrl`/`model`，同步请求不再发送 `enabled`。
 
 OpenCode 配置热重载后，这一轮同步会读到新的 `opencode.json` / `auth.json`，最迟 5s 后切到新模型。`/pet-ai` 页面主要用于 baseURL/密钥/自动碎碎念；**模型字段会被跟随逻辑覆盖**，切模型请用 `/models`。
 
@@ -99,7 +102,7 @@ OpenCode 配置热重载后，这一轮同步会读到新的 `opencode.json` / `
    - runtime 文件字段改名 → `src/daemon.ts` 里做「新旧字段都认」；
    - HTTP 路径/字段变化 → `src/work-status.ts` / `src/balance.ts` / `src/commands.ts` 加适配；
    - standalone 参数变化 → `src/daemon.ts` 的 `spawnDaemon`；
-   - 菜单结构变化 → `src/menu-patch.mjs` 的三个字符串锚点；
+   - 菜单结构变化 → `src/menu-patch.mjs` 的菜单文件探测与字符串锚点；
    - OpenCode 配置/凭据路径变化 → `src/opencode.ts` 的候选列表。
 3. **事件映射不依赖上游**：OpenCode 事件变了才改 `src/events.ts`，与 `dsh-pet` 升级无关。
 4. **确实需要上游补能力**（例如 runtime 文件不写 token、缺少某个端点）：
@@ -112,6 +115,7 @@ OpenCode 配置热重载后，这一轮同步会读到新的 `opencode.json` / `
 | dsh-pet | opencode | Node | 结果 |
 | --- | --- | --- | --- |
 | 0.3.8 | 2.1.3 | 24.18.0 (win32-x64) | ✅ 已实测（2026-10-24） |
+| 0.4.4 | 2.2.5 | 24.18.0 (win32-x64) | ✅ 契约测试 + 单测（2026-11-06） |
 
 升级后把新行补进这张表；CI 至少覆盖一个 Windows + 一个 Linux。
 
